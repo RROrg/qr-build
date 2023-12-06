@@ -1,0 +1,197 @@
+#
+# Copyright (C) 2022 Ing <https://github.com/wjz304>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+
+name: Build QR
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "format %y.%-m.$i or auto"
+        required: false
+        type: string
+      prerelease:
+        description: "pre release"
+        default: false
+        type: boolean
+      br2tag:
+        description: "buildroot tag"
+        default: ""
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+        #with:
+        #  lfs: 'true'
+
+      - name: Checkout
+        uses: actions/checkout@main
+        with:
+          repository: RROrg/qr
+          token: ${{ secrets.RRORG }}
+          path: qr
+
+      # Install dependencies
+      - name: Install dependencies
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+          sudo apt update
+          sudo apt install -y jq cpio gettext
+
+      # calculates the version number and push
+      - name: Calculate version
+        run: |
+          # Calculate version
+          VERSION=""
+          if [ -n "${{ inputs.version }}" ]; then
+            if [ "$(echo ${{ inputs.version }} | cut -d '.' -f 1,2)" = "$(date +'%y.%-m')" ]; then
+              VERSION="${{ inputs.version }}"
+            else
+              LATEST_TAG="$(curl -skLH "Authorization: token ${{ secrets.RRORG }}" "https://api.github.com/repos/RROrg/qr/releases" | jq -r ".[0].tag_name" 2>/dev/null)"
+              if [ -n "${LATEST_TAG}" -a "$(echo ${LATEST_TAG} | cut -d '.' -f 1,2)" = "$(date +'%y.%-m')" ]; then  # format %y.%-m.$i
+                VERSION="$(echo ${LATEST_TAG} | awk -F '.' '{$3=$3+1}1' OFS='.')"
+              else
+                VERSION="$(date +'%y.%-m').0"
+              fi
+            fi
+          else
+            VERSION=""
+          fi
+
+          echo "VERSION: ${VERSION}"
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+          if [ -n "${VERSION}" ]; then
+            cd qr
+
+            # Modify Source File
+            echo "${VERSION}" > VERSION
+            echo "${VERSION}" > files/p1/QR_VERSION
+            sed 's/^QR_VERSION=.*/QR_VERSION="'${VERSION}'"/' -i files/initrd/opt/qr/include/consts.sh
+
+            git checkout main
+            git pull
+            status=$(git status -s | awk '{printf " %s", $2}')
+            if [ -n "${status}" ]; then
+              git add ${status}
+              git commit -m "update $(date +%Y-%m-%d" "%H:%M:%S)"
+              git push -f
+            fi
+          fi
+
+      # Convert po2mo
+      - name: Convert po2mo
+        run: |
+          cd qr
+          . scripts/func.sh "${{ secrets.RRORG }}"
+          convertpo2mo "files/initrd/opt/qr/lang"
+          echo "OK"
+
+      # Build incremental
+      - name: Build image
+        run: |
+          cd qr
+          . scripts/func.sh "${{ secrets.RRORG }}"
+          echo "Create RR image"
+          gzip -dc "files/grub.img.gz" >"qr.img"
+          fdisk -l "qr.img"
+          
+          LOOPX=$(sudo losetup -f)
+          sudo losetup -P "${LOOPX}" "qr.img"
+
+          echo "Mounting image file"
+          mkdir -p "/tmp/p1"
+          mkdir -p "/tmp/p8"
+          sudo mount ${LOOPX}p1 "/tmp/p1"
+          sudo mount ${LOOPX}p8 "/tmp/p8"
+
+          echo "Get Buildroot"
+          BR2TAG="${{ inputs.br2tag }}"
+          [ -z "${BR2TAG}" ] && BR2TAG="latest"
+          getBuildroot "br" "${BR2TAG}"
+          [ ! -f "br/bzImage-qr" -o ! -f "br/initrd-qr" ] && return 1
+          
+          echo "Repack initrd"
+          cp -f "br/bzImage-qr" "files/p8/bzImage-qr"
+          repackInitrd "br/initrd-qr" "files/initrd" "files/p8/initrd-qr"
+
+          echo "Copying files"
+          sudo cp -Rf "files/p1/"* "/tmp/p1"
+          sudo cp -Rf "files/p8/"* "/tmp/p8"
+          sync
+
+          echo "Unmount image file"
+          sudo umount "/tmp/p1"
+          sudo umount "/tmp/p8"
+          rmdir "/tmp/p1"
+          rmdir "/tmp/p8"
+
+          sudo losetup --detach ${LOOPX}
+
+          # echo "Image Converter"
+          # qemu-img convert -O vmdk qr.img qr-dyn.vmdk
+          # qemu-img convert -O vmdk -o adapter_type=lsilogic qr.img -o subformat=monolithicFlat qr.vmdk
+
+      # Zip image and generate checksum
+      - name: Pack
+        run: |
+          cd qr
+          if [ -n "${{ env.VERSION }}" ]; then
+            zip -9 "qr-${{ env.VERSION }}.img.zip" qr.img
+            # zip -9 "qr-${{ env.VERSION }}.vmdk-dyn.zip" qr-dyn.vmdk
+            # zip -9 "qr-${{ env.VERSION }}.vmdk-flat.zip" qr.vmdk qr-flat.vmdk
+          else
+            zip -9 "qr.img.zip" qr.img
+          fi
+
+          # update.zip
+          sha256sum update-list.yml update-check.sh > sha256sum
+          zip -9j update.zip update-list.yml update-check.sh
+          while read F; do
+            if [ -d "${F}" ]; then
+              FTGZ="$(basename "${F}").tgz"
+              tar -czf "${FTGZ}" -C "${F}" .
+              sha256sum "${FTGZ}" >> sha256sum
+              zip -9j update.zip "${FTGZ}"
+              rm -f "${FTGZ}"
+            else
+              (cd $(dirname "${F}") && sha256sum $(basename "${F}")) >> sha256sum
+              zip -9j update.zip "${F}"
+            fi
+          done < <(yq '.replace | explode(.) | to_entries | map([.key])[] | .[]' update-list.yml)
+          zip -9j update.zip sha256sum
+
+      # Upload artifact
+      - name: Upload
+        if: env.VERSION == ''
+        uses: actions/upload-artifact@v3
+        with:
+          name: Images
+          path: |
+            qr/qr*.zip
+            qr/update*.zip
+          retention-days: 5
+
+      # Publish a release if is a tag
+      - name: Release
+        if: env.VERSION != ''
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.VERSION }}
+          prerelease: ${{ inputs.prerelease }}
+          artifacts: |
+            qr/qr*.zip
+            qr/update*.zip
+          owner: RROrg
+          repo: qr
+          token: ${{ secrets.RRORG }}
