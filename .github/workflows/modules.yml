@@ -1,0 +1,149 @@
+#
+# Copyright (C) 2022 Ing <https://github.com/wjz304>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+
+name: Build modules main
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "format %y.%-m.$i or auto"
+        required: false
+        type: string
+      prerelease:
+        description: "pre release"
+        default: false
+        type: boolean
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            kver: 4.14.24
+          - arch: x86_64
+            kver: 5.10.60
+
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+
+      - name: Checkout
+        uses: actions/checkout@main
+        with:
+          repository: RROrg/qr-modules
+          token: ${{ secrets.RRORG }}
+          path: qr-modules
+
+      - name: Init Env
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          sudo timedatectl set-timezone "Asia/Shanghai"
+
+          sudo apt update
+          sudo apt install libelf-dev
+
+      - name: Make modules
+        run: |
+          export WORK_PATH=${{ github.workspace }}
+          . qr-modules/compile.sh
+          echo "----------------- Env  -----------------"
+          KVER=${{ matrix.kver }}
+          makeEnvDeploy ${{ matrix.arch }} ${KVER%.*}
+          echo "----------------- Make -----------------"
+          makemodules qr-modules/src/${{ matrix.kver }} output/modules/${{ matrix.kver }}-qnap
+
+      - name: firmware
+        run: |
+          mkdir -p output/firmware
+
+          echo "get firmware"
+          SOURCE=/tmp/linux-firmware
+          git clone https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git ${SOURCE}
+          while read L; do
+            if [ -e "${SOURCE}/${L}" ]; then
+              mkdir -p "`dirname output/firmware/${L}`"
+              cp "${SOURCE}/${L}" "output/firmware/${L}"
+            else
+              [ ! -e "output/firmware/${L}" ] && echo "Missing ${L}"
+            fi
+          done < <(find ./output/modules/${{ matrix.kver }}-qnap -name \*.ko -exec sh -c '/sbin/modinfo {} | grep ^firmware' \; | awk '{print $2}')
+
+      - name: Tar to Artifacts
+        run: |
+          tar caf ${{ matrix.arch }}-${{ matrix.kver }}.tgz -C output .
+
+
+      - name: Upload to Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: modules
+          path: |
+            ${{ matrix.arch }}-${{ matrix.kver }}.tgz
+
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+
+      - name: Calculate version
+        run: |
+          # Calculate version
+          VERSION=""
+          if [ -n "${{ inputs.version }}" ]; then
+            if [ "$(echo ${{ inputs.version }} | cut -d '.' -f 1,2)" = "$(date +'%y.%-m')" ]; then
+              VERSION="${{ inputs.version }}"
+            else
+              LATEST_TAG="$(curl -skLH "Authorization: token ${{ secrets.RRORG }}" "https://api.github.com/repos/RROrg/qr-modules/releases" | jq -r ".[0].tag_name" 2>/dev/null)"
+              if [ -n "${LATEST_TAG}" -a "$(echo ${LATEST_TAG} | cut -d '.' -f 1,2)" = "$(date +'%y.%-m')" ]; then  # format %y.%-m.$i
+                VERSION="$(echo ${LATEST_TAG} | awk -F '.' '{$3=$3+1}1' OFS='.')"
+              else
+                VERSION="$(date +'%y.%-m').0"
+              fi
+            fi
+          else
+            VERSION=""
+          fi
+
+          echo "VERSION: ${VERSION}"
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: download to artifacts
+        if: env.VERSION != ''
+        uses: actions/download-artifact@v3
+        with:
+          name: modules
+          path: ./modules
+
+      - name: delete-artifact
+        if: env.VERSION != ''
+        uses: geekyeggo/delete-artifact@v2
+        with:
+          name: modules
+
+      - name: Zip modules
+        if: env.VERSION != ''
+        run: |
+          echo "${{ env.VERSION }}" > "modules/VERSION"
+          zip -9 modules.zip -j modules/*
+
+      - name: Release
+        if: env.VERSION != ''
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.VERSION }}
+          prerelease: ${{ inputs.prerelease }}
+          artifacts: modules.zip
+          owner: RROrg
+          repo: qr-modules
+          token: ${{ secrets.RRORG }}
