@@ -95,6 +95,8 @@ jobs:
           cd qr
           . scripts/func.sh "${{ secrets.RRORG }}"
           convertpo2mo "files/initrd/opt/qr/lang"
+          getAddons "files/p8/addons" ${{ inputs.prerelease }}
+          getModules "files/p8/modules" ${{ inputs.prerelease }}
           echo "OK"
 
       # Build incremental
@@ -170,6 +172,26 @@ jobs:
             fi
           done < <(yq '.replace | explode(.) | to_entries | map([.key])[] | .[]' update-list.yml)
           zip -9j update.zip sha256sum
+
+          # updateall.zip
+          rm -f sha256sum
+          echo '  "files/p8/addons/": "/mnt/p8/addons/"' >> update-list.yml
+          echo '  "files/p8/modules/": "/mnt/p8/modules/"' >> update-list.yml
+
+          zip -9j updateall.zip update-list.yml update-check.sh
+          while read F; do
+            if [ -d "${F}" ]; then
+              FTGZ="$(basename "${F}").tgz"
+              tar -czf "${FTGZ}" -C "${F}" .
+              sha256sum "${FTGZ}" >> sha256sum
+              zip -9j updateall.zip "${FTGZ}"
+              rm -f "${FTGZ}"
+            else
+              (cd $(dirname "${F}") && sha256sum $(basename "${F}")) >> sha256sum
+              zip -9j updateall.zip "${F}"
+            fi
+          done < <(yq '.replace | explode(.) | to_entries | map([.key])[] | .[]' update-list.yml)
+          zip -9j updateall.zip sha256sum
 
       # Upload artifact
       - name: Upload
