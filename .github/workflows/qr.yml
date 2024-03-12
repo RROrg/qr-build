@@ -18,10 +18,6 @@ on:
         description: "pre release"
         default: false
         type: boolean
-      br2tag:
-        description: "buildroot tag"
-        default: ""
-        type: string
 
 jobs:
   build:
@@ -89,14 +85,15 @@ jobs:
             fi
           fi
 
-      # Convert po2mo
-      - name: Convert po2mo
+      # Convert po2mo, addons and Modules
+      - name: Convert po2mo, addons and Modules
         run: |
           cd qr
           . scripts/func.sh "${{ secrets.RRORG }}"
           convertpo2mo "files/initrd/opt/qr/lang"
           getAddons "files/p8/addons" ${{ inputs.prerelease }}
           getModules "files/p8/modules" ${{ inputs.prerelease }}
+          getBuildroot "files/p8" ${{ inputs.prerelease }}
           echo "OK"
 
       # Build incremental
@@ -104,10 +101,11 @@ jobs:
         run: |
           cd qr
           . scripts/func.sh "${{ secrets.RRORG }}"
+
           echo "Create RR image"
           gzip -dc "files/grub.img.gz" >"qr.img"
           fdisk -l "qr.img"
-          
+
           LOOPX=$(sudo losetup -f)
           sudo losetup -P "${LOOPX}" "qr.img"
 
@@ -117,15 +115,8 @@ jobs:
           sudo mount ${LOOPX}p1 "/tmp/p1"
           sudo mount ${LOOPX}p8 "/tmp/p8"
 
-          echo "Get Buildroot"
-          BR2TAG="${{ inputs.br2tag }}"
-          [ -z "${BR2TAG}" ] && BR2TAG="latest"
-          getBuildroot "br" "${BR2TAG}"
-          [ ! -f "br/bzImage-qr" -o ! -f "br/initrd-qr" ] && return 1
-          
           echo "Repack initrd"
-          cp -f "br/bzImage-qr" "files/p8/bzImage-qr"
-          repackInitrd "br/initrd-qr" "files/initrd" "files/p8/initrd-qr"
+          repackInitrd "files/p8/initrd-qr" "files/initrd"
 
           echo "Copying files"
           sudo cp -Rf "files/p1/"* "/tmp/p1"
@@ -148,53 +139,53 @@ jobs:
       - name: Pack
         run: |
           cd qr
-          if [ -n "${{ env.VERSION }}" ]; then
-            zip -9 "qr-${{ env.VERSION }}.img.zip" qr.img
-            # zip -9 "qr-${{ env.VERSION }}.vmdk-dyn.zip" qr-dyn.vmdk
-            # zip -9 "qr-${{ env.VERSION }}.vmdk-flat.zip" qr.vmdk qr-flat.vmdk
-          else
-            zip -9 "qr.img.zip" qr.img
-          fi
+
+          VERSION="${{ env.VERSION }}"
+          VERSION="${VERSION:-"test"}"
+
+          zip -9 "qr-${VERSION}.img.zip" qr.img
+          # zip -9 "qr-${VERSION}.vmdk-dyn.zip" qr-dyn.vmdk
+          # zip -9 "qr-${VERSION}.vmdk-flat.zip" qr.vmdk qr-flat.vmdk
 
           # update.zip
           sha256sum update-list.yml update-check.sh > sha256sum
-          zip -9j update.zip update-list.yml update-check.sh
+          zip -9j "update-${VERSION}.zip" update-list.yml update-check.sh
           while read F; do
             if [ -d "${F}" ]; then
               FTGZ="$(basename "${F}").tgz"
               tar -czf "${FTGZ}" -C "${F}" .
               sha256sum "${FTGZ}" >> sha256sum
-              zip -9j update.zip "${FTGZ}"
+              zip -9j "update-${VERSION}.zip" "${FTGZ}"
               rm -f "${FTGZ}"
             else
               (cd $(dirname "${F}") && sha256sum $(basename "${F}")) >> sha256sum
-              zip -9j update.zip "${F}"
+              zip -9j "update-${VERSION}.zip" "${F}"
             fi
           done < <(yq '.replace | explode(.) | to_entries | map([.key])[] | .[]' update-list.yml)
-          zip -9j update.zip sha256sum
+          zip -9j "update-${VERSION}.zip" sha256sum
 
           # updateall.zip
           rm -f sha256sum
           echo '  "files/p8/addons/": "/mnt/p8/addons/"' >> update-list.yml
           echo '  "files/p8/modules/": "/mnt/p8/modules/"' >> update-list.yml
 
-          zip -9j updateall.zip update-list.yml update-check.sh
+          zip -9j "updateall-${VERSION}.zip" update-list.yml update-check.sh
           while read F; do
             if [ -d "${F}" ]; then
               FTGZ="$(basename "${F}").tgz"
               tar -czf "${FTGZ}" -C "${F}" .
               sha256sum "${FTGZ}" >> sha256sum
-              zip -9j updateall.zip "${FTGZ}"
+              zip -9j "updateall-${VERSION}.zip" "${FTGZ}"
               rm -f "${FTGZ}"
             else
               (cd $(dirname "${F}") && sha256sum $(basename "${F}")) >> sha256sum
-              zip -9j updateall.zip "${F}"
+              zip -9j "updateall-${VERSION}.zip" "${F}"
             fi
           done < <(yq '.replace | explode(.) | to_entries | map([.key])[] | .[]' update-list.yml)
-          zip -9j updateall.zip sha256sum
+          zip -9j "updateall-${VERSION}.zip" sha256sum
 
       # Upload artifact
-      - name: Upload
+      - name: Upload to Artifacts
         if: env.VERSION == ''
         uses: actions/upload-artifact@v3
         with:
@@ -214,6 +205,8 @@ jobs:
           artifacts: |
             qr/qr*.zip
             qr/update*.zip
+          body: |
+            - [Changelog](https://t.me/QR_Changelog)
           owner: RROrg
           repo: qr
           token: ${{ secrets.RRORG }}

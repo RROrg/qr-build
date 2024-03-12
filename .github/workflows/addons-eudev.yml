@@ -109,7 +109,7 @@ jobs:
             echo "Copy eudev ..."
             rm -rf qr-addons/eudev/all/addons/eudev*.tgz
             mkdir -p qr-addons/eudev/all/addons/
-            mv -vf eudev/*.tgz qr-addons/eudev/all/addons/
+            mv -f eudev/*.tgz qr-addons/eudev/all/addons/
 
             cd qr-addons
             echo "Git push ..."
