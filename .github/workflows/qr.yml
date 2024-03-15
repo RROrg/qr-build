@@ -72,7 +72,7 @@ jobs:
 
             # Modify Source File
             echo "${VERSION}" > VERSION
-            echo "${VERSION}" > files/p1/QR_VERSION
+            echo "${VERSION}" > files/mnt/p1/QR_VERSION
             sed 's/^QR_VERSION=.*/QR_VERSION="'${VERSION}'"/' -i files/initrd/opt/qr/include/consts.sh
 
             git checkout main
@@ -88,12 +88,19 @@ jobs:
       # Convert po2mo, addons and Modules
       - name: Convert po2mo, addons and Modules
         run: |
+
+          PRE="${{ inputs.prerelease }}"
+
           cd qr
           . scripts/func.sh "${{ secrets.RRORG }}"
+
+          echo "Get extractor"
+          getAddons "files/mnt/p8/addons" "${PRE}"
+          getModules "files/mnt/p8/modules" "${PRE}"
+          getBuildroot "files/mnt/p8" "${PRE}"
+          echo "Repack initrd"
           convertpo2mo "files/initrd/opt/qr/lang"
-          getAddons "files/p8/addons" ${{ inputs.prerelease }}
-          getModules "files/p8/modules" ${{ inputs.prerelease }}
-          getBuildroot "files/p8" ${{ inputs.prerelease }}
+          repackInitrd "files/mnt/p8/initrd-qr" "files/initrd"
           echo "OK"
 
       # Build incremental
@@ -103,7 +110,7 @@ jobs:
           . scripts/func.sh "${{ secrets.RRORG }}"
 
           echo "Create RR image"
-          gzip -dc "files/grub.img.gz" >"qr.img"
+          gzip -dc "files/initrd/opt/qr/grub.img.gz" >"qr.img"
           fdisk -l "qr.img"
 
           LOOPX=$(sudo losetup -f)
@@ -115,12 +122,9 @@ jobs:
           sudo mount ${LOOPX}p1 "/tmp/p1"
           sudo mount ${LOOPX}p8 "/tmp/p8"
 
-          echo "Repack initrd"
-          repackInitrd "files/p8/initrd-qr" "files/initrd"
-
           echo "Copying files"
-          sudo cp -Rf "files/p1/"* "/tmp/p1"
-          sudo cp -Rf "files/p8/"* "/tmp/p8"
+          sudo cp -Rf "files/mnt/p1/"* "/tmp/p1"
+          sudo cp -Rf "files/mnt/p8/"* "/tmp/p8"
           sync
 
           echo "Unmount image file"
@@ -166,8 +170,8 @@ jobs:
 
           # updateall.zip
           rm -f sha256sum
-          echo '  "files/p8/addons/": "/mnt/p8/addons/"' >> update-list.yml
-          echo '  "files/p8/modules/": "/mnt/p8/modules/"' >> update-list.yml
+          echo '  "files/mnt/p8/addons/": "/mnt/p8/addons/"' >> update-list.yml
+          echo '  "files/mnt/p8/modules/": "/mnt/p8/modules/"' >> update-list.yml
 
           zip -9j "updateall-${VERSION}.zip" update-list.yml update-check.sh
           while read F; do
