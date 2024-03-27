@@ -75,17 +75,17 @@ jobs:
             else
               [ ! -e "output/firmware/${L}" ] && echo "Missing ${L}"
             fi
-          done < <(find ./output/modules/${{ matrix.kver }}-qnap -name \*.ko -exec sh -c '/sbin/modinfo {} | grep ^firmware' \; | awk '{print $2}')
+          done < <(find output/modules/${{ matrix.kver }}-qnap -name \*.ko -exec sh -c '/sbin/modinfo {} | grep ^firmware' \; | awk '{print $2}')
 
       - name: Tar to Artifacts
         run: |
-          tar -caf ${{ matrix.arch }}-${{ matrix.kver }}.tgz -C output .
+          tar -zcf ${{ matrix.arch }}-${{ matrix.kver }}.tgz -C output .
 
 
       - name: Upload to Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: modules
+          name: modules-${{ matrix.arch }}-${{ matrix.kver }}
           path: |
             ${{ matrix.arch }}-${{ matrix.kver }}.tgz
 
@@ -119,27 +119,29 @@ jobs:
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
 
       - name: download to artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
-          name: modules
-          path: ./modules
+          path: output
+          pattern: modules-*
+          merge-multiple: true
 
       - name: delete-artifact
-        uses: geekyeggo/delete-artifact@v2
+        uses: geekyeggo/delete-artifact@v5
         with:
-          name: modules
+          name: |
+            modules-*
 
       - name: Zip modules
         run: |
           VERSION="${{ env.VERSION }}"
           VERSION="${VERSION:-"test"}"
 
-          echo "${VERSION}" > "modules/VERSION"
-          zip -9 modules-${VERSION}.zip -j modules/*
+          echo "${VERSION}" > "output/VERSION"
+          zip -9 modules-${VERSION}.zip -j output/*
 
       - name: Upload to Artifacts
-        if: env.VERSION == ''
-        uses: actions/upload-artifact@v3
+        if: success() && env.VERSION == ''
+        uses: actions/upload-artifact@v4
         with:
           name: modules
           path: |
@@ -147,7 +149,7 @@ jobs:
           retention-days: 5
 
       - name: Release
-        if: env.VERSION != ''
+        if: success() && env.VERSION != ''
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ env.VERSION }}

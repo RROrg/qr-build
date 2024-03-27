@@ -62,12 +62,12 @@ jobs:
       - name: Tar to Artifacts
         run: |
           KVER=${{ matrix.kver }}
-          tar -caf eudev-${KVER%%.*}.tgz -C output .
+          tar -zcf eudev-${KVER%%.*}.tgz -C output .
 
       - name: Upload to Artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: eudev
+          name: eudev-${{ matrix.arch }}-${{ matrix.kver }}
           path: |
             eudev-*.tgz
 
@@ -93,15 +93,17 @@ jobs:
           sudo timedatectl set-timezone "Asia/Shanghai"
 
       - name: download to artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
-          name: eudev
-          path: ./eudev
+          path: output
+          pattern: eudev-*
+          merge-multiple: true
 
       - name: delete-artifact
-        uses: geekyeggo/delete-artifact@v2
+        uses: geekyeggo/delete-artifact@v5
         with:
-          name: eudev
+          name: |
+            eudev-*
 
       - name: Check and Push
         run: |
@@ -109,7 +111,7 @@ jobs:
             echo "Copy eudev ..."
             rm -rf qr-addons/eudev/all/addons/eudev*.tgz
             mkdir -p qr-addons/eudev/all/addons/
-            mv -f eudev/*.tgz qr-addons/eudev/all/addons/
+            mv -f output/*.tgz qr-addons/eudev/all/addons/
 
             cd qr-addons
             echo "Git push ..."
