@@ -43,6 +43,7 @@ jobs:
 
           sudo apt update
           sudo apt install -y jq cpio gettext
+          sudo snap install yq
 
       # calculates the version number and push
       - name: Calculate version
@@ -65,13 +66,13 @@ jobs:
           fi
 
           echo "VERSION: ${VERSION}"
-          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >>$GITHUB_ENV
 
           if [ -n "${VERSION}" ]; then
             cd qr
 
             # Modify Source File
-            echo "${VERSION}" > VERSION
+            echo "${VERSION}" >VERSION
             echo "${VERSION}" > files/mnt/p1/QR_VERSION
             sed 's/^QR_VERSION=.*/QR_VERSION="'${VERSION}'"/' -i files/initrd/opt/qr/include/consts.sh
 
@@ -101,6 +102,7 @@ jobs:
           echo "Repack initrd"
           convertpo2mo "files/initrd/opt/qr/lang"
           repackInitrd "files/mnt/p8/initrd-qr" "files/initrd"
+
           echo "OK"
 
       # Build incremental
@@ -152,17 +154,17 @@ jobs:
           # zip -9 "qr-${VERSION}.vmdk-flat.zip" qr.vmdk qr-flat.vmdk
 
           # update.zip
-          sha256sum update-list.yml update-check.sh > sha256sum
+          sha256sum update-list.yml update-check.sh >sha256sum
           zip -9j "update-${VERSION}.zip" update-list.yml update-check.sh
           while read F; do
             if [ -d "${F}" ]; then
               FTGZ="$(basename "${F}").tgz"
               tar -zcf "${FTGZ}" -C "${F}" .
-              sha256sum "${FTGZ}" >> sha256sum
+              sha256sum "${FTGZ}" >>sha256sum
               zip -9j "update-${VERSION}.zip" "${FTGZ}"
               rm -f "${FTGZ}"
             else
-              (cd $(dirname "${F}") && sha256sum $(basename "${F}")) >> sha256sum
+              (cd $(dirname "${F}") && sha256sum $(basename "${F}")) >>sha256sum
               zip -9j "update-${VERSION}.zip" "${F}"
             fi
           done < <(yq '.replace | explode(.) | to_entries | map([.key])[] | .[]' update-list.yml)
@@ -178,11 +180,11 @@ jobs:
             if [ -d "${F}" ]; then
               FTGZ="$(basename "${F}").tgz"
               tar -zcf "${FTGZ}" -C "${F}" .
-              sha256sum "${FTGZ}" >> sha256sum
+              sha256sum "${FTGZ}" >>sha256sum
               zip -9j "updateall-${VERSION}.zip" "${FTGZ}"
               rm -f "${FTGZ}"
             else
-              (cd $(dirname "${F}") && sha256sum $(basename "${F}")) >> sha256sum
+              (cd $(dirname "${F}") && sha256sum $(basename "${F}")) >>sha256sum
               zip -9j "updateall-${VERSION}.zip" "${F}"
             fi
           done < <(yq '.replace | explode(.) | to_entries | map([.key])[] | .[]' update-list.yml)
@@ -210,7 +212,7 @@ jobs:
             qr/qr*.zip
             qr/update*.zip
           body: |
-            - [Changelog](https://t.me/QR_Changelog)
+            - Editing ...
           owner: RROrg
           repo: qr
           token: ${{ secrets.RRORG }}
