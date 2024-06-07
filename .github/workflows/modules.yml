@@ -70,7 +70,7 @@ jobs:
           git clone --depth=1 https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git ${SOURCE}
           while read L; do
             if [ -e "${SOURCE}/${L}" ]; then
-              mkdir -p "`dirname output/firmware/${L}`"
+              mkdir -p "$(dirname output/firmware/${L})"
               cp "${SOURCE}/${L}" "output/firmware/${L}"
             else
               [ ! -e "output/firmware/${L}" ] && echo "Missing ${L}"

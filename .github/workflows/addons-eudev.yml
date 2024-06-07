@@ -107,11 +107,11 @@ jobs:
 
       - name: Check and Push
         run: |
-          if [ `ls eudev/*.tgz 2> /dev/null | wc -l` -gt 0 ]; then
+          if [ $(ls eudev/*.tgz 2>/dev/null | wc -l) -gt 0 ]; then
             echo "Copy eudev ..."
             rm -rf qr-addons/eudev/all/addons/eudev*.tgz
             mkdir -p qr-addons/eudev/all/addons/
-            mv -f output/*.tgz qr-addons/eudev/all/addons/
+            mv -f output/eudev-*.tgz qr-addons/eudev/all/addons/
 
             cd qr-addons
             echo "Git push ..."
