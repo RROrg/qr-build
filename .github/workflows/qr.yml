@@ -52,6 +52,7 @@ jobs:
           # Calculate version
           TAGDATE="$(date +'%Y%m%d%H%M')"
           VERSION=""
+
           if [ -n "${{ inputs.version }}" ]; then
             if [ "$(echo ${{ inputs.version }} | cut -d '.' -f 1,2)" = "$(date +'%y.%-m')" ]; then
               VERSION="${{ inputs.version }}"
@@ -97,9 +98,6 @@ jobs:
       # Convert po2mo, Get exts
       - name: Convert po2mo, addons and Modules
         run: |
-
-          PRE="${{ inputs.prerelease }}"
-
           cd qr
           . scripts/func.sh "${{ secrets.RRORG }}"
 
@@ -109,7 +107,7 @@ jobs:
           getBuildroot "files/mnt/p8" "${PRE}"
           echo "Repack initrd"
           
-          [ "${PRE}" = "true" ] && RELEASE="pre" || RELEASE=""
+          [ "${{ inputs.prerelease }}" = "true" ] && RELEASE="pre" || RELEASE=""
           sed -i "s/^QR_RELEASE=.*$/RR_RELEASE=\"${RELEASE}\"/" files/initrd/opt/qr/include/consts.sh
 
           convertpo2mo "files/initrd/opt/qr/lang"
@@ -149,10 +147,6 @@ jobs:
 
           sudo losetup --detach ${LOOPX}
 
-          # echo "Image Converter"
-          # qemu-img convert -O vmdk qr.img qr-dyn.vmdk
-          # qemu-img convert -O vmdk -o adapter_type=lsilogic qr.img -o subformat=monolithicFlat qr.vmdk
-
       # Zip image and generate checksum
       - name: Pack
         run: |
@@ -161,9 +155,8 @@ jobs:
           VERSION="${{ env.VERSION }}"
           VERSION="${VERSION:-"${TAGDATE}"}"
 
-          zip -9 "qr-${VERSION}.img.zip" qr.img
-          # zip -9 "qr-${VERSION}.vmdk-dyn.zip" qr-dyn.vmdk
-          # zip -9 "qr-${VERSION}.vmdk-flat.zip" qr.vmdk qr-flat.vmdk
+          sha256sum qr.img >sha256sum
+          zip -9 "qr-${VERSION}.img.zip" qr.img sha256sum
 
           # update.zip
           sha256sum update-list.yml update-check.sh >sha256sum
@@ -202,15 +195,34 @@ jobs:
           done < <(yq '.replace | explode(.) | to_entries | map([.key])[] | .[]' update-list.yml)
           zip -9j "updateall-${VERSION}.zip" sha256sum
 
+          # sha256sum
+          sha256sum "qr-${VERSION}.img.zip"     >sha256sum
+          sha256sum "update-${VERSION}.zip"    >>sha256sum
+          sha256sum "updateall-${VERSION}.zip" >>sha256sum
+
       # Upload artifact
       - name: Upload to Artifacts
-        if: success() && env.VERSION == ''
         uses: actions/upload-artifact@v4
         with:
-          name: Images
+          name: qr.img
           path: |
-            qr/qr*.zip
-            qr/update*.zip
+            qr/qr-*.img.zip
+          retention-days: 5
+
+      - name: Upload to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: update
+          path: |
+            qr/update-*.zip
+          retention-days: 5
+
+      - name: Upload to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: updateall
+          path: |
+            qr/updateall-*.zip
           retention-days: 5
 
       # Publish a release if is a tag
@@ -223,6 +235,7 @@ jobs:
           artifacts: |
             qr/qr*.zip
             qr/update*.zip
+            qr/sha256sum
           body: |
             - Editing ...
           owner: RROrg
