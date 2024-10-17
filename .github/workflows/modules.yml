@@ -53,16 +53,18 @@ jobs:
       - name: Make modules
         run: |
           sudo -s  # use root to compile
-          export WORK_PATH=${{ github.workspace }}
-          . qr-modules/compile.sh
-          echo "----------------- Env  -----------------"
           KVER=${{ matrix.kver }}
-          makeEnvDeploy ${{ matrix.arch }} ${KVER%.*}
-          echo "----------------- Make -----------------"
-          makemodules qr-modules/src/${{ matrix.kver }} output/modules/${{ matrix.kver }}-qnap
+          . qr-modules/compile.sh
+          echo "makeEnvDeploy"
+          makeEnvDeploy ${{ matrix.arch }} "${KVER%.*}"
+          
+          echo "makemodules"
+          makemodules "qr-modules/src/${KVER}" "output/modules/${KVER}-qnap"
 
       - name: firmware
         run: |
+          KVER=${{ matrix.kver }}
+
           mkdir -p output/firmware
 
           echo "get firmware"
@@ -75,12 +77,11 @@ jobs:
             else
               [ ! -e "output/firmware/${L}" ] && echo "Missing ${L}"
             fi
-          done < <(find output/modules/${{ matrix.kver }}-qnap -name \*.ko -exec sh -c '/sbin/modinfo {} | grep ^firmware' \; | awk '{print $2}')
+          done < <(find output/modules/${KVER}-qnap -name \*.ko -exec sh -c '/sbin/modinfo {} | grep ^firmware' \; | awk '{print $2}')
 
       - name: Tar to Artifacts
         run: |
           tar -zcf ${{ matrix.arch }}-${{ matrix.kver }}.tgz -C output .
-
 
       - name: Upload to Artifacts
         uses: actions/upload-artifact@v4
@@ -95,6 +96,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@main
+
+      - name: Init Env
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          sudo timedatectl set-timezone "Asia/Shanghai"
 
       - name: Calculate version
         run: |
