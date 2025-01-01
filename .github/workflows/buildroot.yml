@@ -20,7 +20,7 @@ on:
         type: boolean
       br2ver:
         description: "buildroot version"
-        default: "2023.08.x"
+        default: "2024.02.x"
         type: string
       kerver:
         description: "kernel version"
@@ -52,8 +52,12 @@ jobs:
           sudo timedatectl set-timezone "Asia/Shanghai"
 
           sudo apt update
-          sudo apt install -y jq gawk cpio gettext libelf-dev qemu-utils 
-          sudo snap install yq
+          sudo apt install -y locales busybox dialog gettext sed gawk jq curl
+          sudo apt install -y python-is-python3 python3-pip libelf-dev qemu-utils cpio xz-utils lz4 lzma bzip2 gzip zstd
+          # sudo snap install yq
+          if ! command -v yq &>/dev/null || ! yq --version 2>/dev/null | grep -q "v4."; then
+            sudo curl -kL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/bin/yq && sudo chmod a+x /usr/bin/yq
+          fi
 
           df -h
 
@@ -66,7 +70,7 @@ jobs:
               VERSION="${{ inputs.version }}"
             else
               LATEST_TAG="$(curl -skLH "Authorization: token ${{ secrets.RRORG }}" "https://api.github.com/repos/RROrg/qr-buildroot/releases" | jq -r ".[0].tag_name" 2>/dev/null)"
-              if [ -n "${LATEST_TAG}" -a "$(echo ${LATEST_TAG} | cut -d '.' -f 1,2)" = "$(date +'%y.%-m')" ]; then  # format %y.%-m.$i
+              if [ -n "${LATEST_TAG}" ] && [ "$(echo ${LATEST_TAG} | cut -d '.' -f 1,2)" = "$(date +'%y.%-m')" ]; then  # format %y.%-m.$i
                 VERSION="$(echo ${LATEST_TAG} | awk -F '.' '{$3=$3+1}1' OFS='.')"
               else
                 VERSION="$(date +'%y.%-m').0"
@@ -91,7 +95,7 @@ jobs:
       - name: Zip modules
         run: |
           cp -f buildroot/.qr-buildroot/output/images/bzImage bzImage-qr || exit 1
-          cp -f buildroot/.qr-buildroot/output/images/rootfs.cpio.xz initrd-qr || exit 1
+          cp -f buildroot/.qr-buildroot/output/images/rootfs.cpio.zst initrd-qr || exit 1
 
           VERSION="${{ env.VERSION }}"
           VERSION="${VERSION:-"test"}"
@@ -105,7 +109,7 @@ jobs:
         with:
           name: buildroot
           path: |
-            buildroot*.zip 
+            buildroot*.zip
           retention-days: 5
 
       - name: Release
@@ -114,7 +118,7 @@ jobs:
         with:
           tag: ${{ env.VERSION }}
           prerelease: ${{ inputs.prerelease }}
-          artifacts: buildroot*.zip 
+          artifacts: buildroot*.zip
           body: |
             Buildroot version: ${{ env.BUILDROOT_VERSION }}
             Kernel version: ${{ env.KERNEL_VERSION }}
