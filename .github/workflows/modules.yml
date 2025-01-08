@@ -25,9 +25,13 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            kver: 4.14.24
+            qver: 4.5.4
+          #- arch: x86_64
+          #  qver: 5.0.0
+          #- arch: x86_64
+          #  qver: 5.1.0
           - arch: x86_64
-            kver: 5.10.60
+            qver: 5.2.0
 
     runs-on: ubuntu-latest
     steps:
@@ -53,42 +57,56 @@ jobs:
       - name: Make modules
         run: |
           sudo -s  # use root to compile
-          KVER=${{ matrix.kver }}
+          ROOT_PATH=${{ github.workspace }}
+          ARCH=${{ matrix.arch }}
+          QVER=${{ matrix.qver }}
+          DEVICE="TS-X89"
+
           . qr-modules/compile.sh
+
           echo "makeEnvDeploy"
-          makeEnvDeploy ${{ matrix.arch }} "${KVER%.*}"
-          
+          makeEnvDeploy "${ROOT_PATH}" "${ARCH}" "${QVER}" "${DEVICE}"
+
           echo "makemodules"
-          makemodules "qr-modules/src/${KVER}" "output/modules/${KVER}-qnap"
+          KVER=$(getKver "${ROOT_PATH}" "${ARCH}" "${QVER}" "${DEVICE}")
+          mkdir -p "output/modules/${KVER}-qnap"
+          makemodules "${ROOT_PATH}" "${ARCH}" "${QVER}" "${DEVICE}" "qr-modules/src/${KVER}" "output/modules/${KVER}-qnap"
 
       - name: firmware
         run: |
-          KVER=${{ matrix.kver }}
+          sudo -s  # use root to compile
+          ROOT_PATH=${{ github.workspace }}
+          ARCH=${{ matrix.arch }}
+          QVER=${{ matrix.qver }}
+          DEVICE="TS-X89"
 
-          mkdir -p output/firmware
+          . qr-modules/compile.sh
+
+          KVER=$(getKver "${ROOT_PATH}" "${ARCH}" "${QVER}" "${DEVICE}")
+
+          mkdir -p "output/firmware"
 
           echo "get firmware"
           SOURCE=/tmp/linux-firmware
           git clone --depth=1 https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git ${SOURCE}
           while read L; do
+            [ -z "${L}" ] && continue
             if [ -e "${SOURCE}/${L}" ]; then
               mkdir -p "$(dirname output/firmware/${L})"
-              cp "${SOURCE}/${L}" "output/firmware/${L}"
+              cp -f "${SOURCE}/${L}" "output/firmware/${L}"
             else
               [ ! -e "output/firmware/${L}" ] && echo "Missing ${L}"
             fi
-          done < <(find output/modules/${KVER}-qnap -name \*.ko -exec sh -c '/sbin/modinfo {} | grep ^firmware' \; | awk '{print $2}')
+          done <<<$(find output/modules/${KVER}-qnap -name \*.ko -exec sh -c 'modinfo {} | grep ^firmware' \; | awk '{print $2}')
 
-      - name: Tar to Artifacts
-        run: |
-          tar -zcf ${{ matrix.arch }}-${{ matrix.kver }}.tgz -C output .
+          tar -zcf ${ARCH}-${KVER}.tgz -C output .
 
       - name: Upload to Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: modules-${{ matrix.arch }}-${{ matrix.kver }}
+          name: modules-${{ matrix.arch }}-${{ matrix.qver }}
           path: |
-            ${{ matrix.arch }}-${{ matrix.kver }}.tgz
+            ${{ matrix.arch }}-*.tgz
 
   release:
     runs-on: ubuntu-latest
@@ -112,7 +130,7 @@ jobs:
               VERSION="${{ inputs.version }}"
             else
               LATEST_TAG="$(curl -skLH "Authorization: token ${{ secrets.RRORG }}" "https://api.github.com/repos/RROrg/qr-modules/releases" | jq -r ".[0].tag_name" 2>/dev/null)"
-              if [ -n "${LATEST_TAG}" -a "$(echo ${LATEST_TAG} | cut -d '.' -f 1,2)" = "$(date +'%y.%-m')" ]; then  # format %y.%-m.$i
+              if [ -n "${LATEST_TAG}" ] && [ "$(echo ${LATEST_TAG} | cut -d '.' -f 1,2)" = "$(date +'%y.%-m')" ]; then  # format %y.%-m.$i
                 VERSION="$(echo ${LATEST_TAG} | awk -F '.' '{$3=$3+1}1' OFS='.')"
               else
                 VERSION="$(date +'%y.%-m').0"

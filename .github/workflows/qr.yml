@@ -43,8 +43,12 @@ jobs:
           sudo timedatectl set-timezone "Asia/Shanghai"
 
           sudo apt update
-          sudo apt install -y jq cpio gettext
-          sudo snap install yq
+          sudo apt install -y locales busybox dialog gettext sed gawk jq curl
+          sudo apt install -y python-is-python3 python3-pip libelf-dev qemu-utils cpio xz-utils lz4 lzma bzip2 gzip zstd
+          # sudo snap install yq
+          if ! command -v yq &>/dev/null || ! yq --version 2>/dev/null | grep -q "v4."; then
+            sudo curl -kL https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -o /usr/bin/yq && sudo chmod a+x /usr/bin/yq
+          fi
 
       # calculates the version number and push
       - name: Calculate version
@@ -58,7 +62,7 @@ jobs:
               VERSION="${{ inputs.version }}"
             else
               LATEST_TAG="$(curl -skLH "Authorization: token ${{ secrets.RRORG }}" "https://api.github.com/repos/RROrg/qr/releases" | jq -r ".[0].tag_name" 2>/dev/null)"
-              if [ -n "${LATEST_TAG}" -a "$(echo ${LATEST_TAG} | cut -d '.' -f 1,2)" = "$(date +'%y.%-m')" ]; then  # format %y.%-m.$i
+              if [ -n "${LATEST_TAG}" ] && [ "$(echo ${LATEST_TAG} | cut -d '.' -f 1,2)" = "$(date +'%y.%-m')" ]; then  # format %y.%-m.$i
                 VERSION="$(echo ${LATEST_TAG} | awk -F '.' '{$3=$3+1}1' OFS='.')"
               else
                 VERSION="$(date +'%y.%-m').0"
@@ -73,9 +77,8 @@ jobs:
           echo "TAGDATE=${TAGDATE}" >>$GITHUB_ENV
           echo "VERSION=${VERSION}" >>$GITHUB_ENV
 
+          cd qr
           if [ -n "${VERSION}" ]; then
-            cd qr
-
             # Modify Source File
             echo "${VERSION}" >VERSION
             echo "${VERSION}" > files/mnt/p1/QR_VERSION
@@ -90,10 +93,9 @@ jobs:
               git push -f
             fi
           else
-            cd qr
-
             sed -i "s/^QR_VERSION=.*/QR_VERSION=\"${TAGDATE}\"/" files/initrd/opt/qr/include/consts.sh
           fi
+          cd -
 
       # Convert po2mo, Get exts
       - name: Convert po2mo, addons and Modules
@@ -106,7 +108,7 @@ jobs:
           getModules "files/mnt/p8/modules" "${PRE}"
           getBuildroot "files/mnt/p8" "${PRE}"
           echo "Repack initrd"
-          
+
           [ "${{ inputs.prerelease }}" = "true" ] && RELEASE="pre" || RELEASE=""
           sed -i "s/^QR_RELEASE=.*$/RR_RELEASE=\"${RELEASE}\"/" files/initrd/opt/qr/include/consts.sh
 
@@ -128,24 +130,32 @@ jobs:
           LOOPX=$(sudo losetup -f)
           sudo losetup -P "${LOOPX}" "qr.img"
 
-          echo "Mounting image file"
-          mkdir -p "/tmp/p1"
-          mkdir -p "/tmp/p8"
-          sudo mount ${LOOPX}p1 "/tmp/p1"
-          sudo mount ${LOOPX}p8 "/tmp/p8"
+          for i in 1 2 3 5 8; do
+            [ ! -d "files/mnt/p${i}" ] && continue
 
-          echo "Copying files"
-          sudo cp -Rf "files/mnt/p1/"* "/tmp/p1"
-          sudo cp -Rf "files/mnt/p8/"* "/tmp/p8"
-          sync
+            rm -rf "/tmp/mnt/p${i}"
+            mkdir -p "/tmp/mnt/p${i}"
 
-          echo "Unmount image file"
-          sudo umount "/tmp/p1"
-          sudo umount "/tmp/p8"
-          rmdir "/tmp/p1"
-          rmdir "/tmp/p8"
+            echo "Mounting ${LOOPX}p${i}"
+            sudo mount "${LOOPX}p${i}" "/tmp/mnt/p${i}" || {
+              echo "Can't mount ${LOOPX}p${i}."
+              break
+            }
+            echo "Copying files to ${LOOPX}p${i}"
+            [ ${i} -eq 1 ] && sudo cp -af "files/mnt/p${i}/"{.locale,.timezone} "/tmp/mnt/p${i}/" 2>/dev/null || true
+            sudo cp -rf "files/mnt/p${i}/"* "/tmp/mnt/p${i}" || true
 
-          sudo losetup --detach ${LOOPX}
+            sudo sync
+
+            echo "Unmounting ${LOOPX}p${i}"
+            sudo umount "/tmp/mnt/p${i}" || {
+              echo "Can't umount ${LOOPX}p${i}."
+              break
+            }
+            rm -rf "/tmp/mnt/p${i}"
+          done
+
+          sudo losetup --detach "${LOOPX}"
 
       # Zip image and generate checksum
       - name: Pack
@@ -172,7 +182,7 @@ jobs:
               (cd $(dirname "${F}") && sha256sum $(basename "${F}")) >>sha256sum
               zip -9j "update-${VERSION}.zip" "${F}"
             fi
-          done < <(yq '.replace | explode(.) | to_entries | map([.key])[] | .[]' update-list.yml)
+          done <<<$(yq '.replace | explode(.) | to_entries | map([.key])[] | .[]' update-list.yml)
           zip -9j "update-${VERSION}.zip" sha256sum
 
           # updateall.zip
@@ -192,7 +202,7 @@ jobs:
               (cd $(dirname "${F}") && sha256sum $(basename "${F}")) >>sha256sum
               zip -9j "updateall-${VERSION}.zip" "${F}"
             fi
-          done < <(yq '.replace | explode(.) | to_entries | map([.key])[] | .[]' update-list.yml)
+          done <<<$(yq '.replace | explode(.) | to_entries | map([.key])[] | .[]' update-list.yml)
           zip -9j "updateall-${VERSION}.zip" sha256sum
 
           # sha256sum
@@ -237,7 +247,8 @@ jobs:
             qr/update*.zip
             qr/sha256sum
           body: |
-            - Editing ...
+            - Please do not upgrade this version now (In release testing...),
+            - Please upgrade after updating the Changelog ...
           owner: RROrg
           repo: qr
           token: ${{ secrets.RRORG }}
